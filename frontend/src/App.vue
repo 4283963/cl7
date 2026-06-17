@@ -42,18 +42,25 @@
       </section>
 
       <section class="timeline-section">
-        <Timeline
-          :current-time="currentTime"
-          :duration="duration"
-          :is-playing="isPlaying"
-          :progress="progress"
-          :prop-tracks="performanceData?.props || []"
-          :action-tracks="performanceData?.actions || []"
-          :music-tracks="performanceData?.music || {}"
-          @toggle="toggle"
-          @reset="handleReset"
-          @seek="seek"
-        />
+        <div class="timeline-row">
+          <div class="timeline-main">
+            <Timeline
+              :current-time="currentTime"
+              :duration="duration"
+              :is-playing="isPlaying"
+              :progress="progress"
+              :prop-tracks="performanceData?.props || []"
+              :action-tracks="performanceData?.actions || []"
+              :music-tracks="performanceData?.music || {}"
+              @toggle="toggle"
+              @reset="handleReset"
+              @seek="seek"
+            />
+          </div>
+          <div class="tension-side">
+            <TensionGauge :tension="tensionData" />
+          </div>
+        </div>
       </section>
     </main>
 
@@ -74,6 +81,7 @@
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import ShadowStage from './components/ShadowStage.vue';
 import Timeline from './components/Timeline.vue';
+import TensionGauge from './components/TensionGauge.vue';
 import { usePlayer } from './composables/usePlayer';
 import { getPerformance } from './api';
 
@@ -84,6 +92,9 @@ const stageReady = ref(false);
 const showFps = ref(false);
 const fpsDisplay = ref(60);
 const isIntense = ref(false);
+const tensionData = ref({
+  head: 0, body: 0, leftArm: 0, rightArm: 0, staff: 0, leftLeg: 0, rightLeg: 0
+});
 
 const {
   currentTime,
@@ -179,6 +190,24 @@ const handleKeydown = (e) => {
   }
 };
 
+let tensionInterval = null;
+
+const startTensionMonitor = () => {
+  if (tensionInterval) clearInterval(tensionInterval);
+  tensionInterval = setInterval(() => {
+    if (stageRef.value) {
+      tensionData.value = stageRef.value.getTension();
+    }
+  }, 40);
+};
+
+const stopTensionMonitor = () => {
+  if (tensionInterval) {
+    clearInterval(tensionInterval);
+    tensionInterval = null;
+  }
+};
+
 const startFpsMonitor = () => {
   if (fpsInterval) clearInterval(fpsInterval);
   fpsInterval = setInterval(() => {
@@ -199,11 +228,13 @@ const stopFpsMonitor = () => {
 onMounted(async () => {
   await loadPerformance(false);
   window.addEventListener('keydown', handleKeydown);
+  startTensionMonitor();
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
   stopFpsMonitor();
+  stopTensionMonitor();
 });
 </script>
 
@@ -352,6 +383,24 @@ onUnmounted(() => {
 .timeline-section {
   height: 340px;
   flex-shrink: 0;
+}
+
+.timeline-row {
+  display: flex;
+  gap: 16px;
+  height: 100%;
+}
+
+.timeline-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.tension-side {
+  width: 260px;
+  flex-shrink: 0;
+  height: 100%;
 }
 
 .app-footer {

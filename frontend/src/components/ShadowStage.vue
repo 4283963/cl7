@@ -40,8 +40,53 @@ let lastTime = 0;
 let frameCount = 0;
 let fpsTime = 0;
 let currentFps = 60;
+let currentTension = { head: 0, body: 0, leftArm: 0, rightArm: 0, staff: 0, leftLeg: 0, rightLeg: 0 };
+
+const TENSION_PARTS = ['head', 'body', 'leftArm', 'rightArm', 'staff', 'leftLeg', 'rightLeg'];
+const TENSION_WEIGHTS = { rotation: 0.7, position: 0.3 };
+const TENSION_MAX_ROT = 2.5;
+const TENSION_MAX_POS = 0.8;
 
 const lerp = (a, b, t) => a + (b - a) * t;
+const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
+
+const computeTension = (pose) => {
+  const result = {};
+  if (!pose || !defaultPose) {
+    TENSION_PARTS.forEach(p => result[p] = 0);
+    return result;
+  }
+
+  for (let i = 0; i < TENSION_PARTS.length; i++) {
+    const part = TENSION_PARTS[i];
+    const cur = pose[part];
+    const def = defaultPose[part];
+    if (!cur || !def) {
+      result[part] = 0;
+      continue;
+    }
+
+    let rotDist = 0;
+    const cr = cur.rotation || [0, 0, 0];
+    const dr = def.rotation || [0, 0, 0];
+    for (let a = 0; a < 3; a++) rotDist += Math.abs(cr[a] - dr[a]);
+    const rotScore = clamp(rotDist / TENSION_MAX_ROT, 0, 1);
+
+    let posDist = 0;
+    const cp = cur.position || [0, 0, 0];
+    const dp = def.position || [0, 0, 0];
+    for (let a = 0; a < 3; a++) posDist += (cp[a] - dp[a]) ** 2;
+    posDist = Math.sqrt(posDist);
+    const posScore = clamp(posDist / TENSION_MAX_POS, 0, 1);
+
+    result[part] = clamp(
+      rotScore * TENSION_WEIGHTS.rotation + posScore * TENSION_WEIGHTS.position,
+      0,
+      1
+    );
+  }
+  return result;
+};
 
 let actionData = [];
 let propData = [];
@@ -522,6 +567,8 @@ const animate = (timestamp) => {
   const pose = computePoseAtTime(time);
   updatePuppetPose(pose, 0.2);
 
+  currentTension = computeTension(pose);
+
   const musicState = computeActiveMusic(time);
   updateLights(musicState, dt);
 
@@ -588,6 +635,7 @@ defineExpose({
     if (pose) applyPoseDirect(pose);
   },
   getFps: () => currentFps,
+  getTension: () => currentTension,
   restoreContext
 });
 </script>
