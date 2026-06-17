@@ -62,17 +62,32 @@ app.get('/api/performance/:puppetId', (req, res) => {
   if (!puppet) {
     return res.status(404).json({ error: 'Puppet not found' });
   }
+
+  const isIntense = req.query.intense === 'true' || req.query.intense === '1';
+  
+  let actions = actionTracks[req.params.puppetId] || [];
+  let music = musicTracks;
+  const stage = { ...stageConfig };
+
+  if (isIntense) {
+    const { generateIntenseActionTrack, generateIntenseMusicTrack } = require('./data/puppetData');
+    const intenseDuration = 12;
+    actions = generateIntenseActionTrack(puppet.defaultPose, intenseDuration);
+    music = generateIntenseMusicTrack(intenseDuration, 20);
+    stage.duration = intenseDuration;
+  }
+
   res.json({
     puppet: {
       id: puppet.id,
-      name: puppet.name,
+      name: puppet.name + (isIntense ? ' (武打戏)' : ''),
       parts: puppet.parts,
       defaultPose: puppet.defaultPose
     },
-    actions: actionTracks[req.params.puppetId] || [],
+    actions,
     props: propTracks,
-    music: musicTracks,
-    stage: stageConfig
+    music,
+    stage
   });
 });
 

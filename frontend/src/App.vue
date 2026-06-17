@@ -7,6 +7,15 @@
           <span class="current-puppet" v-if="performanceData?.puppet">
             当前角色：{{ performanceData.puppet.name }}
           </span>
+          <button class="mode-btn" @click="toggleIntenseMode">
+            {{ isIntense ? '🎭 普通模式' : '⚔️ 武打模式' }}
+          </button>
+          <button class="fps-btn" @click="toggleFps">
+            {{ showFps ? '隐藏FPS' : '显示FPS' }}
+          </button>
+          <span class="fps-display" v-if="showFps">
+            FPS: {{ fpsDisplay }}
+          </span>
           <span class="status-badge" :class="{ 'status-loading': loading }">
             {{ loading ? '加载中...' : '就绪' }}
           </span>
@@ -17,13 +26,14 @@
     <main class="app-main">
       <section class="stage-section">
         <ShadowStage
-          v-if="performanceData"
+          v-if="performanceData && stageReady"
           ref="stageRef"
           :puppet-model="performanceData.puppet"
-          :current-pose="currentPose"
           :stage-config="performanceData.stage"
-          :active-music="activeMusicEvents"
-          :active-prop="activeProp"
+          :current-time="currentTime"
+          :is-playing="isPlaying"
+          @context-lost="onContextLost"
+          @context-restored="onContextRestored"
         />
         <div v-else class="loading-stage">
           <div class="spinner"></div>
@@ -61,7 +71,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import ShadowStage from './components/ShadowStage.vue';
 import Timeline from './components/Timeline.vue';
 import { usePlayer } from './composables/usePlayer';
@@ -70,6 +80,10 @@ import { getPerformance } from './api';
 const stageRef = ref(null);
 const loading = ref(true);
 const performanceData = ref(null);
+const stageReady = ref(false);
+const showFps = ref(false);
+const fpsDisplay = ref(60);
+const isIntense = ref(false);
 
 const {
   currentTime,
@@ -82,96 +96,74 @@ const {
   setDuration
 } = usePlayer(8);
 
-const lerp = (a, b, t) => a + (b - a) * t;
-const lerpArray = (a, b, t) => a.map((v, i) => lerp(v, b[i], t));
+let fpsInterval = null;
 
-const currentPose = computed(() => {
-  if (!performanceData.value?.actions || !performanceData.value?.puppet?.defaultPose) {
-    return null;
-  }
-
-  const actions = performanceData.value.actions;
-  const defaultPose = performanceData.value.puppet.defaultPose;
-  const time = currentTime.value;
-
-  let prevAction = null;
-  let nextAction = null;
-
-  for (let i = 0; i < actions.length; i++) {
-    const action = actions[i];
-    if (time >= action.time && time < action.time + action.duration) {
-      prevAction = action;
-      nextAction = actions[i + 1];
-      break;
+const loadPerformance = async (intense = false) => {
+  loading.value = true;
+  stageReady.value = false;
+  
+  try {
+    const url = intense 
+      ? '/api/performance/sunwukong?intense=true'
+      : '/api/performance/sunwukong';
+    
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    performanceData.value = data;
+    if (data.stage?.duration) {
+      setDuration(data.stage.duration);
     }
-    if (time < action.time) {
-      nextAction = action;
-      prevAction = actions[i - 1] || { time: 0, duration: 0, pose: defaultPose };
-      break;
-    }
+    
+    await nextTick();
+    stageReady.value = true;
+    
+    await nextTick();
+    setupStageData();
+    
+    loading.value = false;
+  } catch (err) {
+    console.error('加载演出数据失败:', err);
+    loading.value = false;
   }
+};
 
-  if (!prevAction) {
-    prevAction = actions[actions.length - 1] || { pose: defaultPose };
+const toggleIntenseMode = () => {
+  isIntense.value = !isIntense.value;
+  reset();
+  loadPerformance(isIntense.value);
+};
+
+const toggleFps = () => {
+  showFps.value = !showFps.value;
+  if (showFps.value && stageRef.value) {
+    startFpsMonitor();
+  } else {
+    stopFpsMonitor();
   }
-  if (!nextAction) {
-    nextAction = { time: duration.value, pose: defaultPose };
+};
+
+const onContextLost = () => {
+  console.warn('WebGL上下文丢失');
+};
+
+const onContextRestored = () => {
+  console.log('WebGL上下文已恢复');
+  if (performanceData.value) {
+    setupStageData();
   }
+};
 
-  const segmentStart = prevAction.time;
-  const segmentDuration = Math.max((nextAction.time || duration.value) - segmentStart, 0.001);
-  const localTime = Math.max(0, Math.min(time - segmentStart, segmentDuration));
-  const t = localTime / segmentDuration;
-
-  const smoothT = t < 0.5
-    ? 2 * t * t
-    : 1 - Math.pow(-2 * t + 2, 2) / 2;
-
-  const result = {};
-  const allParts = Object.keys(defaultPose);
-
-  allParts.forEach(part => {
-    const fromPose = prevAction.pose?.[part] || defaultPose[part];
-    const toPose = nextAction.pose?.[part] || fromPose;
-
-    result[part] = {
-      position: lerpArray(fromPose.position || defaultPose[part].position, toPose.position || defaultPose[part].position, smoothT),
-      rotation: lerpArray(fromPose.rotation || defaultPose[part].rotation, toPose.rotation || defaultPose[part].rotation, smoothT)
-    };
-  });
-
-  return result;
-});
-
-const activeMusicEvents = computed(() => {
-  if (!performanceData.value?.music) return [];
-
-  const active = [];
-  const time = currentTime.value;
-  const tolerance = 0.15;
-
-  Object.entries(performanceData.value.music).forEach(([track, events]) => {
-    events.forEach(event => {
-      if (time >= event.time - tolerance && time < event.time + event.duration + tolerance) {
-        active.push({ ...event, _track: track });
-      }
-    });
-  });
-
-  return active;
-});
-
-const activeProp = computed(() => {
-  if (!performanceData.value?.props) return null;
-
-  const time = currentTime.value;
-  for (const prop of performanceData.value.props) {
-    if (time >= prop.time && time < prop.time + prop.duration) {
-      return prop;
-    }
-  }
-  return null;
-});
+const setupStageData = () => {
+  if (!stageRef.value || !performanceData.value) return;
+  
+  const data = performanceData.value;
+  stageRef.value.setActionData(data.actions);
+  stageRef.value.setPropData(data.props);
+  stageRef.value.setMusicData(data.music);
+  stageRef.value.setDefaultPose(data.puppet.defaultPose);
+  stageRef.value.setDuration(data.stage?.duration || 8);
+};
 
 const handleReset = () => {
   reset();
@@ -187,24 +179,31 @@ const handleKeydown = (e) => {
   }
 };
 
-onMounted(async () => {
-  try {
-    const data = await getPerformance('sunwukong');
-    performanceData.value = data;
-    if (data.stage?.duration) {
-      setDuration(data.stage.duration);
+const startFpsMonitor = () => {
+  if (fpsInterval) clearInterval(fpsInterval);
+  fpsInterval = setInterval(() => {
+    if (stageRef.value) {
+      const fps = stageRef.value.getFps();
+      fpsDisplay.value = Math.round(fps);
     }
-    loading.value = false;
-  } catch (err) {
-    console.error('加载演出数据失败:', err);
-    loading.value = false;
-  }
+  }, 500);
+};
 
+const stopFpsMonitor = () => {
+  if (fpsInterval) {
+    clearInterval(fpsInterval);
+    fpsInterval = null;
+  }
+};
+
+onMounted(async () => {
+  await loadPerformance(false);
   window.addEventListener('keydown', handleKeydown);
 });
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleKeydown);
+  stopFpsMonitor();
 });
 </script>
 
@@ -251,6 +250,47 @@ onUnmounted(() => {
 .current-puppet {
   font-size: 14px;
   color: #c0c0e0;
+}
+
+.fps-display {
+  font-family: 'Courier New', monospace;
+  font-size: 13px;
+  color: #2ecc71;
+  background: rgba(46, 204, 113, 0.1);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.mode-btn,
+.fps-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+
+.mode-btn {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.2), rgba(192, 57, 43, 0.2));
+  color: #e74c3c;
+  border: 1px solid rgba(231, 76, 60, 0.3);
+}
+
+.mode-btn:hover {
+  background: linear-gradient(135deg, rgba(231, 76, 60, 0.3), rgba(192, 57, 43, 0.3));
+  transform: translateY(-1px);
+}
+
+.fps-btn {
+  background: rgba(52, 152, 219, 0.15);
+  color: #3498db;
+  border: 1px solid rgba(52, 152, 219, 0.3);
+}
+
+.fps-btn:hover {
+  background: rgba(52, 152, 219, 0.25);
 }
 
 .status-badge {

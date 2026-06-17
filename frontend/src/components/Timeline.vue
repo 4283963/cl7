@@ -16,23 +16,23 @@
           </svg>
         </button>
         <div class="time-display">
-          <span class="current-time">{{ formatTime(currentTime) }}</span>
+          <span class="current-time">{{ displayTime }}</span>
           <span class="separator">/</span>
-          <span class="total-time">{{ formatTime(duration) }}</span>
+          <span class="total-time">{{ displayTotalTime }}</span>
         </div>
       </div>
       
       <div class="ruler">
         <div 
           class="playhead"
-          :style="{ left: progress + '%' }"
+          ref="playheadEl"
         ></div>
         <div class="time-marks">
           <span 
             v-for="mark in timeMarks" 
             :key="mark" 
             class="time-mark"
-            :style="{ left: (mark / duration * 100) + '%' }"
+            :style="{ transform: `translateX(${mark / duration * 100}%)` }"
           >
             {{ formatTime(mark) }}
           </span>
@@ -43,7 +43,7 @@
     <div class="tracks-container" ref="tracksRef" @click="handleSeek">
       <div 
         class="playhead-indicator"
-        :style="{ left: progress + '%' }"
+        ref="playheadIndicatorEl"
       ></div>
 
       <div class="track prop-track">
@@ -56,8 +56,8 @@
             v-for="(item, idx) in propTracks"
             :key="'prop-' + idx"
             class="track-item prop-item"
+            :class="{ active: activePropIndex === idx }"
             :style="getItemStyle(item)"
-            :class="{ active: isItemActive(item) }"
           >
             <span class="item-name">{{ item.name }}</span>
           </div>
@@ -68,17 +68,21 @@
         <div class="track-label">
           <span class="track-icon">🕺</span>
           <span>人物动作</span>
+          <span class="track-count">{{ actionTracks.length }}个</span>
         </div>
-        <div class="track-content">
-          <div
-            v-for="(item, idx) in actionTracks"
-            :key="'action-' + idx"
-            class="track-item action-item"
-            :style="getItemStyle(item)"
-            :class="{ active: isItemActive(item) }"
-          >
-            <span class="item-name">{{ item.name }}</span>
-          </div>
+        <div class="track-content" ref="actionTrackContent">
+          <template v-if="actionTracks.length <= 100">
+            <div
+              v-for="(item, idx) in actionTracks"
+              :key="'action-' + idx"
+              class="track-item action-item"
+              :class="{ active: activeActionIndex === idx }"
+              :style="getItemStyle(item)"
+            >
+              <span class="item-name" v-if="actionTracks.length < 20">{{ item.name }}</span>
+            </div>
+          </template>
+          <canvas v-else ref="actionCanvas" class="track-canvas"></canvas>
         </div>
       </div>
 
@@ -90,38 +94,50 @@
         <div class="track-content multi-row">
           <div class="music-row">
             <span class="music-label">锣</span>
-            <div
-              v-for="(item, idx) in musicTracks.gong || []"
-              :key="'gong-' + idx"
-              class="track-item music-item gong-item"
-              :style="getItemStyle(item)"
-              :class="{ active: isItemActive(item) }"
-            >
-              <span class="item-dot"></span>
+            <div class="music-events">
+              <template v-if="musicTracks.gong && musicTracks.gong.length <= 100">
+                <div
+                  v-for="(item, idx) in musicTracks.gong"
+                  :key="'gong-' + idx"
+                  class="track-item music-item gong-item"
+                  :class="{ active: isActiveMusicEvent('gong', idx) }"
+                  :style="getMusicItemStyle(item)"
+                >
+                </div>
+              </template>
+              <canvas v-else ref="gongCanvas" class="music-canvas"></canvas>
             </div>
           </div>
           <div class="music-row">
             <span class="music-label">鼓</span>
-            <div
-              v-for="(item, idx) in musicTracks.drum || []"
-              :key="'drum-' + idx"
-              class="track-item music-item drum-item"
-              :style="getItemStyle(item)"
-              :class="{ active: isItemActive(item) }"
-            >
-              <span class="item-dot"></span>
+            <div class="music-events">
+              <template v-if="musicTracks.drum && musicTracks.drum.length <= 100">
+                <div
+                  v-for="(item, idx) in musicTracks.drum"
+                  :key="'drum-' + idx"
+                  class="track-item music-item drum-item"
+                  :class="{ active: isActiveMusicEvent('drum', idx) }"
+                  :style="getMusicItemStyle(item)"
+                >
+                </div>
+              </template>
+              <canvas v-else ref="drumCanvas" class="music-canvas"></canvas>
             </div>
           </div>
           <div class="music-row">
             <span class="music-label">钹</span>
-            <div
-              v-for="(item, idx) in musicTracks.cymbal || []"
-              :key="'cymbal-' + idx"
-              class="track-item music-item cymbal-item"
-              :style="getItemStyle(item)"
-              :class="{ active: isItemActive(item) }"
-            >
-              <span class="item-dot"></span>
+            <div class="music-events">
+              <template v-if="musicTracks.cymbal && musicTracks.cymbal.length <= 100">
+                <div
+                  v-for="(item, idx) in musicTracks.cymbal"
+                  :key="'cymbal-' + idx"
+                  class="track-item music-item cymbal-item"
+                  :class="{ active: isActiveMusicEvent('cymbal', idx) }"
+                  :style="getMusicItemStyle(item)"
+                >
+                </div>
+              </template>
+              <canvas v-else ref="cymbalCanvas" class="music-canvas"></canvas>
             </div>
           </div>
         </div>
@@ -131,49 +147,116 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch, nextTick, shallowRef } from 'vue';
 
 const props = defineProps({
-  currentTime: Number,
-  duration: Number,
-  isPlaying: Boolean,
-  progress: Number,
+  currentTime: { type: Number, default: 0 },
+  duration: { type: Number, default: 8 },
+  isPlaying: { type: Boolean, default: false },
+  progress: { type: Number, default: 0 },
   propTracks: { type: Array, default: () => [] },
   actionTracks: { type: Array, default: () => [] },
   musicTracks: { type: Object, default: () => ({}) }
 });
 
 const emit = defineEmits(['toggle', 'reset', 'seek']);
+
 const tracksRef = ref(null);
+const playheadEl = ref(null);
+const playheadIndicatorEl = ref(null);
+const actionCanvas = ref(null);
+const gongCanvas = ref(null);
+const drumCanvas = ref(null);
+const cymbalCanvas = ref(null);
+
+const displayTime = computed(() => formatTime(props.currentTime));
+const displayTotalTime = computed(() => formatTime(props.duration));
+
+const timeMarks = computed(() => {
+  const marks = [];
+  const step = props.duration > 20 ? 5 : props.duration > 10 ? 2 : 1;
+  for (let i = 0; i <= props.duration; i += step) {
+    marks.push(Math.round(i * 10) / 10);
+  }
+  return marks;
+});
+
+const activePropIndex = computed(() => {
+  for (let i = 0; i < props.propTracks.length; i++) {
+    const item = props.propTracks[i];
+    if (props.currentTime >= item.time && props.currentTime < item.time + item.duration) {
+      return i;
+    }
+  }
+  return -1;
+});
+
+const activeActionIndex = computed(() => {
+  const actions = props.actionTracks;
+  if (!actions.length) return -1;
+  
+  for (let i = 0; i < actions.length; i++) {
+    const item = actions[i];
+    if (props.currentTime >= item.time && props.currentTime < item.time + item.duration) {
+      return i;
+    }
+  }
+  return -1;
+});
+
+const activeMusicIndices = shallowRef({ gong: -1, drum: -1, cymbal: -1 });
+
+const updateActiveMusicIndices = () => {
+  const time = props.currentTime;
+  const tolerance = 0.1;
+  
+  ['gong', 'drum', 'cymbal'].forEach(track => {
+    const events = props.musicTracks[track];
+    if (!events || !events.length) {
+      activeMusicIndices.value[track] = -1;
+      return;
+    }
+    
+    let found = -1;
+    for (let i = 0; i < events.length; i++) {
+      const e = events[i];
+      if (time >= e.time - tolerance && time < e.time + e.duration + tolerance) {
+        found = i;
+        break;
+      }
+    }
+    activeMusicIndices.value[track] = found;
+  });
+};
+
+watch(() => props.currentTime, updateActiveMusicIndices);
+
+const isActiveMusicEvent = (track, idx) => {
+  return activeMusicIndices.value[track] === idx;
+};
 
 const formatTime = (seconds) => {
-  if (!seconds && seconds !== 0) return '0:00';
+  if (!seconds && seconds !== 0) return '0:00.0';
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
   const ms = Math.floor((seconds % 1) * 10);
   return `${mins}:${secs.toString().padStart(2, '0')}.${ms}`;
 };
 
-const timeMarks = computed(() => {
-  const marks = [];
-  const step = props.duration > 10 ? 2 : 1;
-  for (let i = 0; i <= props.duration; i += step) {
-    marks.push(i);
-  }
-  return marks;
-});
-
 const getItemStyle = (item) => {
   const left = (item.time / props.duration) * 100;
-  const width = (item.duration / props.duration) * 100;
+  const width = Math.max((item.duration / props.duration) * 100, 0.5);
   return {
-    left: left + '%',
-    width: Math.max(width, 2) + '%'
+    transform: `translateX(${left}%)`,
+    width: `${width}%`
   };
 };
 
-const isItemActive = (item) => {
-  return props.currentTime >= item.time && props.currentTime < (item.time + item.duration);
+const getMusicItemStyle = (item) => {
+  const left = (item.time / props.duration) * 100;
+  return {
+    transform: `translateX(${left}%)`
+  };
 };
 
 const handleSeek = (e) => {
@@ -183,6 +266,145 @@ const handleSeek = (e) => {
   const ratio = x / rect.width;
   emit('seek', ratio * props.duration);
 };
+
+let rafId = null;
+
+const updatePlayheads = () => {
+  const progress = props.progress;
+  if (playheadEl.value) {
+    playheadEl.value.style.transform = `translateX(${progress}%)`;
+  }
+  if (playheadIndicatorEl.value) {
+    playheadIndicatorEl.value.style.transform = `translateX(${progress}%)`;
+  }
+  rafId = requestAnimationFrame(updatePlayheads);
+};
+
+const drawMusicCanvas = (canvas, events, color, activeIndex) => {
+  if (!canvas || !events || !events.length) return;
+  
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  
+  const h = rect.height;
+  const w = rect.width;
+  const dotRadius = Math.max(3, Math.min(8, w / props.duration / 2));
+  
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i];
+    const x = (e.time / props.duration) * w;
+    
+    const isActive = i === activeIndex;
+    const intensity = e.intensity || 0.5;
+    const r = isActive ? dotRadius * 1.5 : dotRadius * (0.6 + intensity * 0.4);
+    
+    ctx.beginPath();
+    ctx.arc(x, h / 2, r, 0, Math.PI * 2);
+    
+    if (isActive) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 15;
+      ctx.fillStyle = color;
+    } else {
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.7;
+    }
+    
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+  }
+};
+
+const drawActionCanvas = (canvas, actions) => {
+  if (!canvas || !actions || !actions.length) return;
+  
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  
+  const h = rect.height;
+  const w = rect.width;
+  const barHeight = Math.max(4, h * 0.6);
+  const y = (h - barHeight) / 2;
+  
+  for (let i = 0; i < actions.length; i++) {
+    const a = actions[i];
+    const x = (a.time / props.duration) * w;
+    const width = Math.max(2, (a.duration / props.duration) * w - 1);
+    
+    const isActive = i === activeActionIndex.value;
+    
+    ctx.fillStyle = isActive 
+      ? 'rgba(65, 105, 225, 0.9)' 
+      : 'rgba(100, 149, 237, 0.5)';
+    
+    if (isActive) {
+      ctx.shadowColor = '#4169e1';
+      ctx.shadowBlur = 8;
+    }
+    
+    ctx.beginPath();
+    ctx.roundRect(x, y, width, barHeight, 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+};
+
+const redrawCanvases = () => {
+  if (props.actionTracks.length > 100 && actionCanvas.value) {
+    drawActionCanvas(actionCanvas.value, props.actionTracks);
+  }
+  
+  const gongEvents = props.musicTracks.gong || [];
+  if (gongEvents.length > 100 && gongCanvas.value) {
+    drawMusicCanvas(gongCanvas.value, gongEvents, '#ff4500', activeMusicIndices.value.gong);
+  }
+  
+  const drumEvents = props.musicTracks.drum || [];
+  if (drumEvents.length > 100 && drumCanvas.value) {
+    drawMusicCanvas(drumCanvas.value, drumEvents, '#8b4513', activeMusicIndices.value.drum);
+  }
+  
+  const cymbalEvents = props.musicTracks.cymbal || [];
+  if (cymbalEvents.length > 100 && cymbalCanvas.value) {
+    drawMusicCanvas(cymbalCanvas.value, cymbalEvents, '#ffd700', activeMusicIndices.value.cymbal);
+  }
+};
+
+let canvasRafId = null;
+const canvasUpdateLoop = () => {
+  redrawCanvases();
+  canvasRafId = requestAnimationFrame(canvasUpdateLoop);
+};
+
+onMounted(() => {
+  updatePlayheads();
+  updateActiveMusicIndices();
+  
+  nextTick(() => {
+    canvasUpdateLoop();
+  });
+});
+
+onUnmounted(() => {
+  if (rafId) cancelAnimationFrame(rafId);
+  if (canvasRafId) cancelAnimationFrame(canvasRafId);
+});
 </script>
 
 <style scoped>
@@ -262,12 +484,13 @@ const handleSeek = (e) => {
 .playhead {
   position: absolute;
   top: 0;
+  left: 0;
   width: 2px;
   height: 100%;
   background: #ffcc00;
   z-index: 10;
   box-shadow: 0 0 8px rgba(255, 204, 0, 0.6);
-  transition: left 0.05s linear;
+  will-change: transform;
 }
 
 .time-marks {
@@ -278,7 +501,7 @@ const handleSeek = (e) => {
 .time-mark {
   position: absolute;
   top: 50%;
-  transform: translate(-50%, -50%);
+  transform: translateY(-50%);
   font-size: 11px;
   color: #8080a0;
   font-family: 'Courier New', monospace;
@@ -294,12 +517,13 @@ const handleSeek = (e) => {
 .playhead-indicator {
   position: absolute;
   top: 0;
-  bottom: 0;
+  left: 0;
   width: 2px;
+  height: 100%;
   background: linear-gradient(180deg, #ffcc00, #ff9900);
   z-index: 20;
   pointer-events: none;
-  transition: left 0.05s linear;
+  will-change: transform;
 }
 
 .playhead-indicator::before {
@@ -321,8 +545,8 @@ const handleSeek = (e) => {
 }
 
 .track-label {
-  width: 120px;
-  min-width: 120px;
+  width: 140px;
+  min-width: 140px;
   padding: 12px 16px;
   background: rgba(0, 0, 0, 0.2);
   border-right: 1px solid #3a3a5e;
@@ -338,6 +562,14 @@ const handleSeek = (e) => {
 
 .track-icon {
   font-size: 18px;
+}
+
+.track-count {
+  font-size: 11px;
+  color: #8080a0;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 6px;
+  border-radius: 10px;
 }
 
 .track-content {
@@ -366,6 +598,21 @@ const handleSeek = (e) => {
   flex-shrink: 0;
 }
 
+.music-events {
+  position: relative;
+  flex: 1;
+  height: 28px;
+}
+
+.track-canvas,
+.music-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
 .track-item {
   position: absolute;
   top: 50%;
@@ -377,17 +624,20 @@ const handleSeek = (e) => {
   padding: 0 10px;
   font-size: 12px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: box-shadow 0.15s, background 0.15s;
   overflow: hidden;
   white-space: nowrap;
 }
 
-.music-row .track-item {
+.music-events .track-item {
   position: relative;
   transform: none;
-  height: 22px;
-  top: 0;
-  margin: 0;
+  height: 16px;
+  width: 16px;
+  top: 6px;
+  padding: 0;
+  border-radius: 50%;
+  display: inline-flex;
 }
 
 .prop-item {
@@ -414,10 +664,9 @@ const handleSeek = (e) => {
 
 .music-item {
   border-radius: 50%;
-  width: 16px !important;
-  min-width: 16px;
-  padding: 0;
-  justify-content: center;
+  width: 14px;
+  min-width: 14px;
+  height: 14px;
 }
 
 .gong-item {
@@ -426,7 +675,7 @@ const handleSeek = (e) => {
 }
 
 .gong-item.active {
-  box-shadow: 0 0 12px #ff4500, 0 0 20px rgba(255, 69, 0, 0.5);
+  box-shadow: 0 0 10px #ff4500, 0 0 16px rgba(255, 69, 0, 0.5);
   transform: scale(1.3);
 }
 
@@ -436,7 +685,7 @@ const handleSeek = (e) => {
 }
 
 .drum-item.active {
-  box-shadow: 0 0 12px #8b4513, 0 0 20px rgba(139, 69, 19, 0.5);
+  box-shadow: 0 0 10px #8b4513, 0 0 16px rgba(139, 69, 19, 0.5);
   transform: scale(1.3);
 }
 
@@ -446,16 +695,12 @@ const handleSeek = (e) => {
 }
 
 .cymbal-item.active {
-  box-shadow: 0 0 12px #ffd700, 0 0 20px rgba(255, 215, 0, 0.5);
+  box-shadow: 0 0 10px #ffd700, 0 0 16px rgba(255, 215, 0, 0.5);
   transform: scale(1.3);
 }
 
 .item-name {
   font-weight: 500;
-}
-
-.item-dot {
-  display: none;
 }
 
 .tracks-container::-webkit-scrollbar {

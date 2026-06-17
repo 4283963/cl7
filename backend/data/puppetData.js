@@ -32,6 +32,105 @@ const puppetModels = {
   }
 };
 
+const generateIntenseActionTrack = (basePose, duration) => {
+  const actions = [];
+  const numActions = Math.floor(duration * 8);
+  
+  for (let i = 0; i < numActions; i++) {
+    const time = (i / numActions) * duration;
+    const actDuration = duration / numActions;
+    const phase = (i / numActions) * Math.PI * 4;
+    
+    const pose = {
+      head: {
+        rotation: [0, Math.sin(phase * 2) * 0.3, Math.sin(phase) * 0.15],
+        position: [Math.sin(phase * 0.5) * 0.2, 2.5 + Math.sin(phase * 3) * 0.1, 0]
+      },
+      body: {
+        rotation: [0, 0, Math.sin(phase * 1.5) * 0.1],
+        position: [Math.sin(phase * 0.7) * 0.3, 1.0 + Math.abs(Math.sin(phase * 2)) * 0.3, 0]
+      },
+      leftArm: {
+        rotation: [0, 0, -1.0 - Math.sin(phase * 3) * 0.5],
+        position: [-0.8 + Math.sin(phase) * 0.2, 1.5 + Math.sin(phase * 2) * 0.3, 0]
+      },
+      rightArm: {
+        rotation: [0, 0, 1.2 + Math.sin(phase * 2.5) * 0.8],
+        position: [0.8 + Math.sin(phase * 1.5) * 0.3, 1.5 + Math.sin(phase * 3) * 0.4, 0]
+      },
+      staff: {
+        rotation: [0, 0, 1.5 + Math.sin(phase * 4) * 1.5],
+        position: [1.3 + Math.sin(phase * 2) * 0.5, 1.0 + Math.sin(phase * 3) * 0.6, 0]
+      },
+      leftLeg: {
+        rotation: [0, 0, Math.sin(phase * 2) * 0.4],
+        position: [-0.35, -0.5 + Math.sin(phase * 1.5) * 0.2, 0]
+      },
+      rightLeg: {
+        rotation: [0, 0, -Math.sin(phase * 2) * 0.4],
+        position: [0.35, -0.5 + Math.sin(phase * 1.5 + Math.PI) * 0.2, 0]
+      }
+    };
+    
+    actions.push({
+      time,
+      duration: actDuration,
+      name: `动作${i + 1}`,
+      pose
+    });
+  }
+  
+  return actions;
+};
+
+const generateIntenseMusicTrack = (duration, density = 12) => {
+  const gong = [];
+  const drum = [];
+  const cymbal = [];
+  
+  const gongCount = Math.floor(duration * density * 0.3);
+  const drumCount = Math.floor(duration * density);
+  const cymbalCount = Math.floor(duration * density * 0.4);
+  
+  for (let i = 0; i < gongCount; i++) {
+    const time = Math.random() * duration;
+    gong.push({
+      time,
+      duration: 0.15 + Math.random() * 0.2,
+      name: `锣${i + 1}`,
+      intensity: 0.5 + Math.random() * 0.5,
+      color: i % 3 === 0 ? '#FF0000' : i % 3 === 1 ? '#FF4500' : '#FF6347'
+    });
+  }
+  gong.sort((a, b) => a.time - b.time);
+  
+  for (let i = 0; i < drumCount; i++) {
+    const time = (i / drumCount) * duration + (Math.random() - 0.5) * 0.05;
+    drum.push({
+      time: Math.max(0, Math.min(duration, time)),
+      duration: 0.08 + Math.random() * 0.12,
+      name: `鼓${i + 1}`,
+      intensity: 0.4 + Math.random() * 0.6,
+      color: i % 4 === 0 ? '#8B0000' : '#8B4513'
+    });
+  }
+  drum.sort((a, b) => a.time - b.time);
+  
+  for (let i = 0; i < cymbalCount; i++) {
+    const time = Math.random() * duration;
+    cymbal.push({
+      time,
+      duration: 0.1 + Math.random() * 0.15,
+      name: `钹${i + 1}`,
+      intensity: 0.5 + Math.random() * 0.5,
+      color: '#FFD700'
+    });
+  }
+  cymbal.sort((a, b) => a.time - b.time);
+  
+  return { gong, drum, cymbal };
+};
+
 const actionTracks = {
   sunwukong: [
     { time: 0, duration: 1.5, name: '起势', pose: {
@@ -76,7 +175,8 @@ const actionTracks = {
       rightArm: { rotation: [0, 0, 0.2], position: [0.8, 1.5, 0] },
       staff: { rotation: [0, 0, 0.3], position: [1.3, 0.8, 0] }
     }}
-  ]
+  ],
+  'sunwukong-intense': null
 };
 
 const propTracks = [
@@ -125,5 +225,7 @@ module.exports = {
   actionTracks,
   propTracks,
   musicTracks,
-  stageConfig
+  stageConfig,
+  generateIntenseActionTrack,
+  generateIntenseMusicTrack
 };
